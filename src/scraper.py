@@ -1,8 +1,12 @@
+from sqlalchemy.orm import Session
+from . import models # imports sqlalchemy models
+from .geocoder import get_city_coordinates # import geocoder function
 # API Client Function
 import requests
 # This is a more powerful alternative to using print() statements.
 # It allows creation of formatted messages with different levels of importance (INFO, WARNING, ERROR).
 import logging
+from typing import Optional, List, Any
 
 # The basic settings for the Python logging module
 # level=logging.INFO captures and displays all message levels of INFO or higher (WARNING, ERROR, CRITICAL)
@@ -11,7 +15,77 @@ logging.basicConfig(level=logging.INFO)
 # __name__ ensures logger name matches module/filename, allows control of diff. parts of app later
 logger = logging.getLogger(__name__)
 
-def search_doctors_by_coordinates(profession_id, center_lat, center_lng, bbox_coordinates):
+def scrape_doctors_for_city(db: Session, city_name: str, profession_id: int) -> None:
+    """
+    Main orchestrator funtion to find and store doctors for a given city
+    """
+
+    # Check db first, city may already be in table.
+    db_city = db.query(models.City).filter(models.City.city_name == city_name).first()
+
+    # City in db.
+    if db_city:
+        center_lat = db_city.center_lat
+        center_lng = db_city.center_lng
+        bbox = db_city.bbox
+        logger.info(f"using cached coordinates for {city_name}")
+
+    else:
+        # City not in db, geocode/make API call to Ameli
+        logger.info(f"City {city_name} not found in cache. Geocoding...")
+        coords = get_city_coordinates(city_name)
+
+        if not coords:
+            logger.error(f"Failed to geocode city: {city_name}")
+            return
+        
+        center_lat = coords['center_lat']
+        center_lng = coords['center_lng']
+        bbox = coords['bbox']
+
+        # Create new db entry for new city data
+        new_city = models.City(
+            city_name = city_name,
+            center_lat = center_lat,
+            center_lng = center_lng,
+            bbox = bbox
+        )
+
+        db.add(new_city)
+        db.commit() # Save the new city to the db
+        db.refresh(new_city) # Get the newly generated city_id
+        logger.info(f"Saved new city to DB: {city_name} (ID: {new_city.city_id})")
+
+        db_city = new_city
+
+        # Call the main doctors API with coordinates (cache-retrieved or new)
+        doctors_data = search_doctors_by_coordinates(profession_id, center_lat, center_lng, bbox)
+
+        # Process and save each doctor.
+        for doctor_data in doctors_data.get('data', []):
+            new_doctor = models.Doctor(
+                first_name = doctor_data['prenom'],
+                last_name = doctor_data['nom'],
+                specialty=doctor_data['profession']['specialite']['libelle'],
+                city_id=db_city.city_id,
+                address = doctor_data['voie'],
+                office_name = doctor_data['complement'],
+                city = doctor_data['ville'],
+                postal_code = doctor_data['codePostal'],
+                latitude = doctor_data['geocode']['latitude'],
+                longitude = doctor_data['geocode']['longitude'],
+                phone_number = doctor_data['coordonnees']['numTel'],
+                vitale_card = doctor_data['carteVitale'],
+                # sector_1_agmt = doctor_data[''],
+            )
+
+            db.add(new_doctor)
+        db.commit() # Saves all new docs at one time
+        logger.info(f"Saved {len(doctors_data.get('data', []))} doctors for {city_name}")
+
+
+
+def search_doctors_by_coordinates(profession_id: int, center_lat: float, center_lng: float, bbox_coordinates: str) -> Optional[dict[str, Any]]:
     
     """
     Fetches a list of doctors from the Ameli API based on geographic coordinates.

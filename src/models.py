@@ -18,10 +18,10 @@ class Doctor(Base):
     longitude = Column(Float(10, 7))
     phone_number = Column(String)
     vitale_card = Column(Boolean, default=False)
-    sector_1_agmt = Column(Boolean, default=False)
+    # sector_1_agmt = Column(Boolean, default=False)
     
 
-class Cities(Base):
+class City(Base):
     __tablename__ = "cities"
     city_id = Column(Integer, primary_key=True, index=True)
     city_name = Column(String, index=True)
