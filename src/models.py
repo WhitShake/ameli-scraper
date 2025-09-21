@@ -1,5 +1,6 @@
+#src/models.py
 from sqlalchemy import Column, Integer, String, Boolean, Float, ForeignKey
-from database import Base
+from .database import Base
 
 class Doctor(Base):
     __tablename__ = "doctors"
